@@ -10,7 +10,7 @@ def indexSequenceBowtie2(referenceFile, threads):
 		run_successfully = True
 	else:
 		command = ['bowtie2-build', '--threads', str(threads), referenceFile, referenceFile]
-		run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None)
+		run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None, True)
 	return run_successfully
 
 
@@ -22,12 +22,12 @@ def mappingBowtie2(fastq_files, referenceFile, threads, outdir):
 	run_successfully = indexSequenceBowtie2(referenceFile, threads)
 
 	if run_successfully:
-		command = ['bowtie2', '-q', '--very-sensitive-local', '--threads', str(threads), '-x', referenceFile, '', '-S', sam_file]
+		command = ['bowtie2', '-q', '--very-sensitive-local', '--threads', str(threads), '-x', referenceFile, '', '--no-unal', '-S', sam_file]
 		if len(fastq_files) == 1:
-			command[8] = '-U ' + fastq_files
+			command[8] = '-U ' + fastq_files[0]
 		else:
 			command[8] = '-1 ' + fastq_files[0] + ' -2 ' + fastq_files[1]
-		run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None)
+		run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None, True)
 
 	if not run_successfully:
 		sam_file = None
@@ -41,7 +41,7 @@ def sortAlignment(alignment_file, output_file, sortByName_True, threads):
 	command = ['samtools', 'sort', '-o', output_file, '-O', outFormat_string, '', '-@', str(threads), alignment_file]
 	if sortByName_True:
 		command[6] = '-n'
-	run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None)
+	run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None, True)
 	if not run_successfully:
 		output_file = None
 	return run_successfully, output_file
@@ -50,14 +50,16 @@ def sortAlignment(alignment_file, output_file, sortByName_True, threads):
 # Index alignment file
 def indexAlignment(alignment_file):
 	command = ['samtools', 'index', alignment_file]
-	run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None)
+	run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None, True)
 	return run_successfully
 
 
-def pilon(assembly, bam_file, outdir):
+def pilon(jar_path_pilon, assembly, bam_file, outdir, jarMaxMemory):
 	assembly_polished = os.path.splitext(assembly)[0] + '.polished.fasta'
-	command = ['pilon-1.18.jar', '--genome', assembly, '--frags', bam_file, '--outdir', outdir, '--output', os.path.basename(os.path.splitext(assembly_polished)[0]), '--changes', '--vcf']
-	run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None)
+	command = ['java', '', '-jar', jar_path_pilon, '--genome', assembly, '--frags', bam_file, '--outdir', outdir, '--output', os.path.basename(os.path.splitext(assembly_polished)[0]), '--changes', '--vcf']
+	if str(jarMaxMemory) != 'off':
+		command[1] = '-Xmx' + str(int(round(jarMaxMemory * 1024, 0))) + 'M'
+	run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None, True)
 	if not run_successfully:
 		assembly_polished = None
 	return run_successfully, assembly_polished
@@ -89,7 +91,7 @@ pilon_timer = partial(utils.timer, name='Pilon')
 
 
 @pilon_timer
-def runPilon(assembly, fastq_files, threads, outdir, keepFiles, keepSPAdesAssembly):
+def runPilon(jar_path_pilon, assembly, fastq_files, threads, outdir, jarMaxMemory, alignment_file):
 	failing = {}
 	failing['sample'] = False
 
@@ -101,33 +103,34 @@ def runPilon(assembly, fastq_files, threads, outdir, keepFiles, keepSPAdesAssemb
 	assembly_link = os.path.join(pilon_folder, os.path.basename(assembly))
 	os.symlink(assembly, assembly_link)
 
-	assembly_polished = None
+	run_successfully = True
 
-	# Index assembly using Bowtie2
-	run_successfully = indexSequenceBowtie2(assembly_link, threads)
-
-	if run_successfully:
-		run_successfully, sam_file = mappingBowtie2(fastq_files, assembly_link, threads, pilon_folder)
+	if alignment_file is None:
+		# Index assembly using Bowtie2
+		run_successfully = indexSequenceBowtie2(assembly_link, threads)
 
 		if run_successfully:
-			bam_file = os.path.splitext(sam_file)[0] + '.bam'
-			run_successfully, bam_file = sortAlignment(sam_file, bam_file, False, threads)
+			run_successfully, sam_file = mappingBowtie2(fastq_files, assembly_link, threads, pilon_folder)
 
 			if run_successfully:
-				os.remove(sam_file)
-				run_successfully = indexAlignment(bam_file)
+				alignment_file = os.path.splitext(sam_file)[0] + '.bam'
+				run_successfully, alignment_file = sortAlignment(sam_file, alignment_file, False, threads)
 
 				if run_successfully:
-					run_successfully, assembly_polished = pilon(assembly_link, bam_file, pilon_folder)
+					os.remove(sam_file)
+					run_successfully = indexAlignment(alignment_file)
 
-					if run_successfully:
-						parsePilonResult(assembly_polished, outdir)
-						shutil.copyfile(assembly_polished, os.path.join(outdir, os.path.basename(assembly_polished)))
-						assembly_polished = os.path.join(outdir, os.path.basename(assembly_polished))
-						if not keepSPAdesAssembly:
-							os.remove(assembly)
+	assembly_polished = None
 
-	if not keepFiles:
-		utils.removeDirectory(pilon_folder)
+	if run_successfully:
+		run_successfully, assembly_polished = pilon(jar_path_pilon, assembly_link, alignment_file, pilon_folder, jarMaxMemory)
 
-	return run_successfully, None, failing, assembly_polished
+		if run_successfully:
+			parsePilonResult(assembly_polished, outdir)
+			shutil.copyfile(assembly_polished, os.path.join(outdir, os.path.basename(assembly_polished)))
+			assembly_polished = os.path.join(outdir, os.path.basename(assembly_polished))
+
+	if os.path.isfile(alignment_file):
+		os.remove(alignment_file)
+
+	return run_successfully, None, failing, assembly_polished, pilon_folder

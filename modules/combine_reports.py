@@ -3,12 +3,12 @@
 # -*- coding: utf-8 -*-
 
 """
-getSeqENA.py - Get fastq files from ENA using Run IDs
+combine_reports.py - Combine INNUca reports
 <https://github.com/miguelpmachado/manipulateFasta/>
 
 Copyright (C) 2016 Miguel Machado <mpmachado@medicina.ulisboa.pt>
 
-Last modified: July 22, 2016
+Last modified: November 16, 2016
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -26,12 +26,15 @@ import os
 import sys
 import time
 
-version = '0.1'
+version = '0.3'
 
 
-def combine_reports(args):
-	innucaOut = os.path.abspath(args.innucaOut)
-	outdir = os.path.abspath(args.outdir)
+def combine_reports(innucaOut, outdir, json, time_str):
+	if time_str is None:
+		time_str = time.strftime("%Y%m%d-%H%M%S")
+
+	innucaOut = os.path.abspath(innucaOut)
+	outdir = os.path.abspath(outdir)
 	check_create_directory(outdir)
 
 	files = [f for f in os.listdir(innucaOut) if not f.startswith('.') and os.path.isfile(os.path.join(innucaOut, f))]
@@ -54,126 +57,304 @@ def combine_reports(args):
 	if len(directories) == 0:
 		sys.exit('No samples found')
 
-	files_to_search = ['coverage_report.txt', 'spades_report.txt', 'pilon_report.txt', 'mlst_report.txt']
+	fields = ['#samples', 'first_coverage', 'trueCoverage_absent_genes', 'trueCoverage_multiple_alleles', 'trueCoverage_sample_coverage', 'second_Coverage', 'pear_assembled_reads', 'pear_unassembled_reads', 'pear_dicarded_reads', 'SPAdes_number_contigs', 'SPAdes_number_bp', 'SPAdes_filtered_contigs', 'SPAdes_filtered_bp', 'assembly_coverage_initial', 'assembly_coverage_filtered', 'mapped_reads_percentage', 'mapping_filtered_contigs', 'mapping_filtered_bp', 'Pilon_changes', 'Pilon_contigs_changed', 'MLST_scheme', 'MLST_ST', 'final_assembly']
 
 	for directory in directories:
 		sample = directory
-		print '\n' + sample
 		directory = os.path.join(os.path.join(innucaOut, directory, ''))
 
 		files = [f for f in os.listdir(directory) if not f.startswith('.') and os.path.isfile(os.path.join(directory, f))]
 		if len(files) == 0:
 			print 'No files found! Continue to the next sample'
 		else:
-			results[sample] = ['NA', 'NA', 'NA', 'NA', 'NA', 'NA', 'NA', 'NA']
+			results[sample] = {}
+			for field in fields:
+				results[sample][field] = 'NA'
+
+			results[sample]['#samples'] = sample
 
 			for file_found in files:
 				name_file_found = file_found
 				file_found = os.path.join(directory, file_found)
 
-				if name_file_found in files_to_search:
-					if name_file_found == files_to_search[0]:
-						data = []
-						with open(file_found, 'rtU') as reader:
-							for line in reader:
-								if len(line) > 0:
-									line = line.splitlines()[0].rsplit('x')[0]
-									data.append(line)
-						if len(data) == 2:
-							results[sample][0] = data[0]
-							results[sample][1] = data[1]
-						elif len(data) == 1:
-							if samples_report is not None:
-								with open(samples_report, 'rtU') as reader:
-									for line in reader:
-										if len(line) > 0:
-											line = line.splitlines()[0]
-											line = line.split('\t')
-											if line[0] in sample:
-												if line[7] == 'True':
-													results[sample][0] = data[0]
-												elif line[15] == 'True':
-													results[sample][1] = data[0]
-					elif name_file_found == files_to_search[1]:
-						contigs = False
-						bp = False
-						with open(file_found, 'rtU') as reader:
-							for line in reader:
-								if len(line) > 0:
-									line = line.splitlines()[0].split(' ')[0]
-									if line.startswith('#'):
-										if line.startswith('contigs', 1):
-											contigs = True
-										elif line.startswith('bp', 1):
-											bp = True
-									else:
-										if contigs:
-											results[sample][2] = line
-											contigs = False
-										if bp:
-											results[sample][3] = line
-											bp = False
-					elif name_file_found == files_to_search[2]:
-						general = False
-
-						changes = False
-						contigs = False
-						with open(file_found, 'rtU') as reader:
-							for line in reader:
-								if len(line) > 0:
+				if name_file_found == 'coverage_report.txt':
+					data = []
+					with open(file_found, 'rtU') as reader:
+						for line in reader:
+							if len(line) > 0:
+								line = line.splitlines()[0].rsplit('x')[0]
+								data.append(line)
+					if len(data) == 2:
+						results[sample]['first_coverage'] = data[0]
+						results[sample]['second_Coverage'] = data[1]
+					elif len(data) == 1:
+						if samples_report is not None:
+							with open(samples_report, 'rtU') as reader:
+								header = None
+								for line in reader:
 									line = line.splitlines()[0]
-									if line != '#by_contigs':
-										if line.startswith('#'):
-											if line.startswith('general', 1):
-												general = True
-											else:
-												general = False
-										elif line.startswith('>') and general:
-											if line.startswith('changes', 1):
-												changes = True
-											elif line.startswith('contigs', 1):
-												contigs = True
-										else:
-											if changes:
-												results[sample][4] = line
-												changes = False
-											if contigs:
-												results[sample][5] = line
-												contigs = False
+									if len(line) > 0:
+										line = line.split('\t')
+
+										if line[0].startswith('#'):
+											header = line
+
+										if line[0] in sample:
+											if line[header.index("first_Coverage_runSuccessfully")] == 'True':
+												results[sample]['first_coverage'] = data[0]
+											elif line[header.index("second_Coverage_runSuccessfully")] == 'True':
+												results[sample]['second_Coverage'] = data[0]
+				elif name_file_found == 'trueCoverage_report.txt':
+					general, absent_genes, multiple_alleles, sample_coverage = False, False, False, False
+					with open(file_found, 'rtU') as reader:
+						for line in reader:
+							line = line.splitlines()[0]
+							if len(line) > 0:
+								if line.startswith('#'):
+									if line.startswith('general', 1):
+										general = True
 									else:
-										break
-					elif name_file_found == files_to_search[3]:
-						species = False
-						st = False
-						with open(file_found, 'rtU') as reader:
-							for line in reader:
-								if len(line) > 0:
-									line = line.splitlines()[0].split(' ')[0]
+										general = False
+								elif line.startswith('>') and general:
+									if line.startswith('number_absent_genes', 1):
+										absent_genes = True
+									elif line.startswith('number_genes_multiple_alleles', 1):
+										multiple_alleles = True
+									elif line.startswith('mean_sample_coverage', 1):
+										sample_coverage = True
+								else:
+									if general:
+										if absent_genes:
+											results[sample]['trueCoverage_absent_genes'] = line
+											absent_genes = False
+										elif multiple_alleles:
+											results[sample]['trueCoverage_multiple_alleles'] = line
+											multiple_alleles = False
+										elif sample_coverage:
+											results[sample]['trueCoverage_sample_coverage'] = line
+											sample_coverage = False
+				elif name_file_found == 'pear_report.txt':
+					assembled, unassembled, discarded = False, False, False
+					with open(file_found, 'rtU') as reader:
+						for line in reader:
+							line = line.splitlines()[0]
+							if len(line) > 0:
+								if line.startswith('#'):
+									if line.startswith('assembled_reads', 1):
+										assembled = True
+									elif line.startswith('unassembled_reads', 1):
+										unassembled = True
+									elif line.startswith('discarded_reads', 1):
+										discarded = True
+								else:
+									if assembled:
+										results[sample]['pear_assembled_reads'] = line
+										assembled = False
+									elif unassembled:
+										results[sample]['pear_unassembled_reads'] = line
+										unassembled = False
+									elif discarded:
+										results[sample]['pear_discarded_reads'] = line
+										discarded = False
+				elif name_file_found.startswith('spades_report.original.'):
+					general = False
+
+					contigs = False
+					bp = False
+					with open(file_found, 'rtU') as reader:
+						for line in reader:
+							if len(line) > 0:
+								line = line.splitlines()[0].split(' ')[0]
+								if line.startswith('#'):
+									if line.startswith('general', 1):
+										general = True
+									else:
+										general = False
+								elif line.startswith('>') and general:
+									if line.startswith('contigs', 1):
+										contigs = True
+									elif line.startswith('bp', 1):
+										bp = True
+								else:
+									if contigs:
+										results[sample]['SPAdes_number_contigs'] = line
+										contigs = False
+									if bp:
+										results[sample]['SPAdes_number_bp'] = line
+										bp = False
+				elif name_file_found.startswith('spades_report.filtered.'):
+					general = False
+
+					contigs = False
+					bp = False
+					with open(file_found, 'rtU') as reader:
+						for line in reader:
+							if len(line) > 0:
+								line = line.splitlines()[0].split(' ')[0]
+								if line.startswith('#'):
+									if line.startswith('general', 1):
+										general = True
+									else:
+										general = False
+								elif line.startswith('>') and general:
+									if line.startswith('contigs', 1):
+										contigs = True
+									elif line.startswith('bp', 1):
+										bp = True
+								else:
+									if contigs:
+										results[sample]['SPAdes_filtered_contigs'] = line
+										contigs = False
+									elif bp:
+										results[sample]['SPAdes_filtered_bp'] = line
+										bp = False
+				elif name_file_found == 'assembly_mapping_report.coverage.txt':
+					general = False
+
+					initial = False
+					filtered = False
+					with open(file_found, 'rtU') as reader:
+						for line in reader:
+							line = line.splitlines()[0]
+							if len(line) > 0:
+								if line.startswith('#'):
+									if line.startswith('general', 1):
+										general = True
+									else:
+										general = False
+								elif line.startswith('>') and general:
+									if line.startswith('initial', 1):
+										initial = True
+									elif line.startswith('filtered', 1):
+										filtered = True
+								else:
+									if initial:
+										results[sample]['assembly_coverage_initial'] = line
+										initial = False
+									elif filtered:
+										results[sample]['assembly_coverage_filtered'] = line
+										filtered = False
+				elif name_file_found == 'assembly_mapping_report.mapping.txt':
+					total = False
+					total_reads = 0
+					mapped = False
+					mapped_reads = 0
+					with open(file_found, 'rtU') as reader:
+						for line in reader:
+							line = line.splitlines()[0].split(' ')[0]
+							if len(line) > 0:
+								if line.startswith('#'):
+									total = False
+									mapped = False
+									if line.startswith('in_total', 1):
+										total = True
+									elif line.startswith('mapped', 1):
+										mapped = True
+								elif line.startswith('>'):
+									continue
+								else:
+									if total:
+										total_reads = int(line)
+										total = False
+									elif mapped:
+										mapped_reads = int(line)
+										mapped = False
+					results[sample]['mapped_reads_percentage'] = str(round((float(mapped_reads) / float(total_reads)), 2) * 100)
+				elif name_file_found.startswith('assembly_mapping_report.sequences_filtered.'):
+					general = False
+
+					contigs = False
+					bp = False
+					with open(file_found, 'rtU') as reader:
+						for line in reader:
+							line = line.splitlines()[0]
+							if len(line) > 0:
+								if line.startswith('#'):
+									if line.startswith('general', 1):
+										general = True
+									else:
+										general = False
+								elif line.startswith('>') and general:
+									if line.startswith('contigs', 1):
+										contigs = True
+									elif line.startswith('bp', 1):
+										bp = True
+								else:
+									if contigs:
+										results[sample]['mapping_filtered_contigs'] = line
+										contigs = False
+									if bp:
+										results[sample]['mapping_filtered_bp'] = line
+										bp = False
+				elif name_file_found == 'pilon_report.txt':
+					general = False
+
+					changes = False
+					contigs = False
+					with open(file_found, 'rtU') as reader:
+						for line in reader:
+							if len(line) > 0:
+								line = line.splitlines()[0]
+								if line != '#by_contigs':
 									if line.startswith('#'):
-										if line.startswith('scheme', 1):
-											species = True
-										elif line.startswith('ST', 1):
-											st = True
+										if line.startswith('general', 1):
+											general = True
+										else:
+											general = False
+									elif line.startswith('>') and general:
+										if line.startswith('changes', 1):
+											changes = True
+										elif line.startswith('contigs', 1):
+											contigs = True
 									else:
-										if species:
-											results[sample][6] = line
-											species = False
-										if st:
-											results[sample][7] = line
-											st = False
+										if changes:
+											results[sample]['Pilon_changes'] = line
+											changes = False
+										if contigs:
+											results[sample]['Pilon_contigs_changed'] = line
+											contigs = False
+								else:
+									break
+				elif name_file_found == 'mlst_report.txt':
+					species = False
+					st = False
+					with open(file_found, 'rtU') as reader:
+						for line in reader:
+							line = line.splitlines()[0]
+							if len(line) > 0:
+								if line.startswith('#'):
+									if line.startswith('scheme', 1):
+										species = True
+									elif line.startswith('ST', 1):
+										st = True
+								else:
+									if species:
+										results[sample]['MLST_scheme'] = line
+										species = False
+									if st:
+										results[sample]['MLST_ST'] = line
+										st = False
+				elif name_file_found == 'final_assembly.txt':
+					with open(file_found, 'rtU') as reader:
+						for line in reader:
+							line = line.splitlines()[0]
+							if len(line) > 0:
+								results[sample]['final_assembly'] = line
 
 	if len(results) == 0:
 		sys.exit('No results were found')
 
 	print '\n' + 'Writing results...'
-	report = open(os.path.join(outdir, str('combine_samples_report.' + time.strftime("%Y%m%d-%H%M%S") + '.tab')), 'wt')
-	report.write('#samples' + '\t' + 'first_coverage' + '\t' + 'second_Coverage' + '\t' + 'SPAdes_number_contigs' + '\t' + 'SPAdes_number_bp' + '\t' + 'Pilon_changes' + '\t' + 'Pilon_contigs_changed' + '\t' + 'scheme' + '\t' + 'ST' + '\n')
-	report.flush()
+	with open(os.path.join(outdir, str('combine_samples_reports.' + time_str + '.tab')), 'wt') as report:
+		report.write('\t'.join(fields) + '\n')
+		for sample in results:
+			sample_data = [results[sample][field] for field in fields]
+			report.write('\t'.join(sample_data) + '\n')
 
-	for sample in results:
-		report.write(sample + '\t' + '\t'.join(results[sample]) + '\n')
-		report.flush()
-	report.close()
+	if json:
+		import json
+		with open(os.path.join(outdir, str('combine_samples_reports.' + time_str + '.json')), 'wt') as writer:
+			json.dump(results, writer)
 
 	print '\n' + 'DONE: ' + str(len(results)) + ' samples analysed.'
 
@@ -185,7 +366,7 @@ def check_create_directory(directory):
 
 def main():
 
-	parser = argparse.ArgumentParser(prog='python combine_reports.py', description="Combine INNUca reports (Coverage, SPAdes, Pilon, MLST)", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+	parser = argparse.ArgumentParser(prog='python combine_reports.py', description="Combine INNUca reports (Estimated Coverage, True Coverage, Pear, SPAdes, Pilon, Assembly Mapping, MLST)", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 	parser.add_argument('--version', help='Version information', action='version', version=str('%(prog)s v' + version))
 
 	parser_required = parser.add_argument_group('Required options')
@@ -193,12 +374,11 @@ def main():
 
 	parser_optional = parser.add_argument_group('Facultative options')
 	parser_optional.add_argument('-o', '--outdir', type=str, metavar='/path/to/output/directory/', help='Path to where to store the outputs', required=False, default='.')
-
-	parser.set_defaults(func=combine_reports)
+	parser_optional.add_argument('--json', action='store_true', help='Also save the results in json format')
 
 	args = parser.parse_args()
 
-	args.func(args)
+	combine_reports(args.innucaOut, args.outdir, args.json, None)
 
 
 if __name__ == "__main__":

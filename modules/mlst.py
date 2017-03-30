@@ -7,7 +7,7 @@ mlst_timer = partial(utils.timer, name='MLST')
 
 def getScheme(species):
 	command = ['which', 'mlst']
-	run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None)
+	run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None, False)
 	mlst_folder = stdout.splitlines()[0]
 	mlst_db_path = os.path.join(os.path.dirname(os.path.dirname(mlst_folder)), 'db', 'species_scheme_map.tab')
 
@@ -16,16 +16,31 @@ def getScheme(species):
 	scheme = 'unknown'
 
 	with open(mlst_db_path, 'rtU') as reader:
-		pass
+		genus_mlst_scheme = None
 		for line in reader:
 			line = line.splitlines()[0]
 			if len(line) > 0:
 				if not line.startswith('#'):
 					line = line.lower().split('\t')
-					if line[0] == species[0] and line[1] == species[1]:
-						scheme = line[2]
+					line = [line[i].split(' ')[0] for i in range(0, len(line))]
+					if line[0] == species[0]:
+						if line[1] == '':
+							genus_mlst_scheme = line[2]
+						elif line[1] == species[1]:
+							scheme = line[2]
+		if scheme == 'unknown' and genus_mlst_scheme is not None:
+			scheme = genus_mlst_scheme
+
+	print '\n' + 'MLST scheme found for ' + ' '.join(species) + ': ' + scheme
 
 	return scheme
+
+
+def getBlastPath():
+	print '\n' + 'The following blastn will be used'
+	command = ['which', 'blastn']
+	run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None, True)
+	print stdout
 
 
 @mlst_timer
@@ -35,8 +50,7 @@ def runMlst(contigs, scheme, outdir):
 	failing['sample'] = False
 
 	command = ['mlst', contigs]
-
-	run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None)
+	run_successfully, stdout, stderr = utils.runCommandPopenCommunicate(command, False, None, True)
 
 	if run_successfully:
 		scheme_mlst = stdout.splitlines()[0].split('\t')[1].split('_')[0]
